@@ -1,5 +1,5 @@
 param([ValidateSet('debug', 'release')][string]$Configuration = 'release', [switch]$SandboxManifest,
-    [string]$TargetDirectory = 'target', [string]$OutputDirectory = 'dist', [switch]$Archive)
+    [string]$TargetDirectory = 'target', [string]$OutputDirectory = 'dist', [switch]$Archive, [switch]$Installer)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repository "$TargetDirectory/$Configuration"
@@ -61,3 +61,17 @@ if ($Archive) {
     Write-Output "Release archive: $archivePath"
 }
 Write-Output "Self-contained Rust app: $destination"
+if ($Installer) {
+    $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+    if (-not (Test-Path -LiteralPath $compiler)) {
+        $compiler = Join-Path $env:LOCALAPPDATA 'Programs/Inno Setup 6/ISCC.exe'
+    }
+    if (-not (Test-Path -LiteralPath $compiler)) { throw 'Install Inno Setup 6 to build the Windows installer' }
+    $output = Split-Path -Parent $destination
+    & $compiler "/DAppVersion=$version" "/DSourceDirectory=$destination" "/DOutputDirectory=$output" "/DArchitecture=$architecture" (Join-Path $PSScriptRoot 'installer.iss')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
+    $installerPath = Join-Path $output "mihomo-x-$version-$architecture-setup.exe"
+    $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$installerPath.sha256" -Value "$installerHash  $(Split-Path -Leaf $installerPath)" -Encoding utf8
+    Write-Output "Windows installer: $installerPath"
+}

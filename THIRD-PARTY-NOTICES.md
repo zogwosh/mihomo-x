@@ -7,4 +7,4 @@ mihomo-x distributes an unmodified Mihomo v1.19.32 executable as an independent 
 - Windows App SDK runtime and Microsoft VC++ runtime: Microsoft redistributables, supplied unchanged from the SDK and Visual Studio redist directories. Their applicable Microsoft license terms apply.
 - Other Rust dependencies and exact versions are recorded in Cargo.lock. Their upstream license metadata is available in the corresponding crates.io packages.
 
-The application's own license is not yet selected. This release is distributed through a private repository; no open-source license grant for the application is implied.
+The application's own license is not yet selected. Public repository visibility does not itself grant an open-source license for the application.

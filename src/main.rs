@@ -957,7 +957,7 @@ impl Component for ClientApp {
                     .text(app_label)
                     .into(),
                 TextBlock::new()
-                    .text("私有仓库更新需要安装并登录 gh，且拥有仓库访问权限。更新后应用自动重启。")
+                    .text("从 GitHub 下载并校验安装包，安装后自动重启。")
                     .text_wrapping(TextWrapping::Wrap)
                     .into(),
                 Button::new()

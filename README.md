@@ -1,21 +1,19 @@
 # mihomo-x
 
-GitHub 仓库：[zogwosh/mihomo-x](https://github.com/zogwosh/mihomo-x)（私有）。
-下载：[GitHub Releases](https://github.com/zogwosh/mihomo-x/releases)。首版提供 Windows x64 自包含 ZIP 和 SHA256。
+GitHub 仓库：[zogwosh/mihomo-x](https://github.com/zogwosh/mihomo-x)（公开）。
+下载：[GitHub Releases](https://github.com/zogwosh/mihomo-x/releases)。从 v0.1.1 开始提供 Windows x64 安装包 EXE 和 SHA256。运行安装向导，默认安装到 Program Files，提供开始菜单快捷方式、可选桌面快捷方式和卸载入口。
 
 ## 开机启动与应用更新
 
 设置页的“开机启动”独立于“启动后自动连接”。开启后注册当前用户登录触发、最高权限运行的计划任务；关闭时删除任务。启动隐藏由现有开关控制。移动应用目录后，请关闭再开启自启以更新路径。
 
-应用启动后检查应用自身更新，设置页也可手动检查。发现更高稳定版本后点击“更新并重启”：下载完整分发包、验证 GitHub Release 资产 SHA256、退出应用、备份并替换应用文件、重新启动。应用数据和已升级的 Mihomo 内核保留；文件替换失败恢复旧文件，日志位于数据目录的 `app-update.log`，备份保存在该次 `update-*` 目录。程序启动后的健康回滚尚未实现。
-
-私有仓库检查与下载复用 `gh` 登录身份。需要安装 GitHub CLI，执行 `gh auth login` 并拥有该仓库读取权限；缺少权限或 gh 时明确显示错误，不在应用设置中存储令牌。普通浏览器下载同样需要仓库访问权限。
+应用启动后检查应用自身更新，设置页也可手动检查。发现更高稳定版本后点击“更新并重启”：从公开 GitHub Releases 下载安装包、验证资产 SHA256、退出应用、静默安装到当前目录并重新启动。不需要 GitHub CLI 或登录。应用数据与独立内核保留；更新日志位于数据目录的 app-update.log 和 app-update.log.installer.log。不提供启动健康失败后的版本回滚。
 
 应用名称、可执行文件、图标和数据目录已改为 `mihomo-x`；新数据目录为 `%LOCALAPPDATA%/mihomo-x`，不自动迁移旧 `%LOCALAPPDATA%/te` 数据。
 
 ## GitHub 发布
 
-更新 `Cargo.toml` 版本及 `Cargo.lock` 后，推送对应 `v<版本>` 标签。`.github/workflows/release.yml` 在 Windows 上执行现有格式与 Clippy 检查、下载已固定且校验的内核、编译和打包，再上传 ZIP 和 SHA256 到 Release。标签必须与项目版本一致。手动运行仅生成构建产物。当前工作流仅构建 x64；ARM64 发布尚未验证。
+更新 `Cargo.toml` 版本及 `Cargo.lock` 后，推送对应 `v<版本>` 标签。`.github/workflows/release.yml` 在 Windows 上执行现有格式与 Clippy 检查、下载已固定且校验的内核、编译和打包，使用 Inno Setup 6 编译安装包，再上传 EXE 和 SHA256 到 Release。标签必须与项目版本一致。手动运行仅生成构建产物。当前工作流仅构建 x64；ARM64 发布尚未验证。
 
 Windows 原生 Clash（mihomo）客户端，定位为「裸包装」：不重造内核，只做界面、配置合成与内核进程管理。
 
@@ -95,7 +93,7 @@ cargo build --release
 
 # 生成自包含的 Rust 分发目录
 ./scripts/package.ps1
-# 交付 dist/release 整个目录，入口为 mihomo-x.exe
+# 分发 dist/mihomo-x-<版本>-x64-setup.exe
 ```
 
 前置条件：
