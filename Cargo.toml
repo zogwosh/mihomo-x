@@ -1,0 +1,21 @@
+[package]
+name = "mihomo-x"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows-reactor = "0.100"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinInet", "Win32_System_JobObjects", "Win32_Security", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_UI_Controls_Dialogs", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[build-dependencies]
+windows-reactor-setup = "0.100"
+
+[profile.release]
+panic = "abort"

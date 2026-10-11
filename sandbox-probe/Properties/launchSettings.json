@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SandboxProbe (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SandboxProbe (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
