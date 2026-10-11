@@ -18,7 +18,8 @@ try {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath $file.FullName -Destination $target -Force
     }
-    Start-Process -FilePath (Join-Path $Destination 'mihomo-x.exe') -WorkingDirectory $Destination
+    $app = Start-Process -FilePath (Join-Path $Destination 'mihomo-x.exe') -WorkingDirectory $Destination -PassThru
+    if ($app.WaitForExit(3000)) { throw "Updated application exited during startup: $($app.ExitCode)" }
     Add-Content -LiteralPath $Log -Value "$(Get-Date -Format o) Update installed; backup: $backup"
 } catch {
     $failure = $_
@@ -33,6 +34,9 @@ try {
             }
         }
         Add-Content -LiteralPath $Log -Value "$(Get-Date -Format o) Update failed; previous files restored: $failure"
+        if ($copied.Count -gt 0) {
+            Start-Process -FilePath (Join-Path $Destination 'mihomo-x.exe') -WorkingDirectory $Destination
+        }
     } catch {
         Add-Content -LiteralPath $Log -Value "$(Get-Date -Format o) Update failed: $failure; restore failed: $_; backup: $backup"
     }

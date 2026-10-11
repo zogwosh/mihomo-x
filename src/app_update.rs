@@ -11,7 +11,10 @@ pub fn latest() -> Result<Release> {
     let output = Command::new("gh")
         .args(["api", &format!("repos/{REPOSITORY}/releases/latest")])
         .creation_flags(0x08000000)
-        .output()?;
+        .output()
+        .map_err(|error| {
+            format!("无法调用 GitHub CLI，请安装 gh 并登录后再检查应用更新：{error}")
+        })?;
     if !output.status.success() {
         return Err(format!(
             "应用更新检查失败，请确认 gh 已登录且可访问私有仓库：{}",
@@ -63,7 +66,8 @@ pub fn stage(release: &Release, directory: &Path) -> Result<()> {
         ])
         .arg(&staging)
         .creation_flags(0x08000000)
-        .output()?;
+        .output()
+        .map_err(|error| format!("无法调用 GitHub CLI 下载应用更新：{error}"))?;
     if !output.status.success() {
         return Err(format!("应用下载失败：{}", String::from_utf8_lossy(&output.stderr)).into());
     }
