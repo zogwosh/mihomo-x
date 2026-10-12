@@ -18,6 +18,7 @@ pub struct Backend {
     subscription_attempts: std::collections::BTreeMap<Uuid, std::time::Instant>,
     job: usize,
     delays: std::collections::BTreeMap<String, u64>,
+    delay_errors: std::collections::BTreeMap<String, String>,
     progress: std::sync::Arc<kernel::DownloadProgress>,
 }
 
@@ -33,6 +34,8 @@ pub struct Snapshot {
     pub directory: String,
     pub system_proxy: String,
     pub delays: std::collections::BTreeMap<String, u64>,
+    pub delay_errors: std::collections::BTreeMap<String, String>,
+    pub log_text: String,
 }
 
 #[derive(Clone)]
@@ -53,6 +56,7 @@ pub enum Action {
     SystemProxy(bool),
     Select(String, String),
     Delay(String),
+    DelayGroup(String),
     OpenData,
     OpenLog,
     ExportDiagnostics,
@@ -132,6 +136,7 @@ impl Backend {
             subscription_attempts: std::collections::BTreeMap::new(),
             job,
             delays: std::collections::BTreeMap::new(),
+            delay_errors: std::collections::BTreeMap::new(),
             progress,
         })
     }
@@ -178,6 +183,7 @@ impl Backend {
         }
         self.kernel = Some(kernel);
         self.delays.clear();
+        self.delay_errors.clear();
         Ok(())
     }
 
@@ -213,6 +219,23 @@ impl Backend {
     }
 
     pub fn snapshot(&mut self) -> Result<Snapshot> {
+        use std::io::{Read, Seek, SeekFrom};
+        let log_path = self.directory.join("mihomo.log");
+        let mut log_text = String::new();
+        if log_path.exists() {
+            let mut file = fs::File::open(log_path)?;
+            let size = file.metadata()?.len();
+            let start = size.saturating_sub(65536);
+            file.seek(SeekFrom::Start(start))?;
+            let mut bytes = Vec::new();
+            file.take(65536).read_to_end(&mut bytes)?;
+            if start > 0
+                && let Some(end) = bytes.iter().position(|byte| *byte == b'\n')
+            {
+                bytes.drain(..=end);
+            }
+            log_text = String::from_utf8_lossy(&bytes).into_owned();
+        }
         let live = match self.kernel.as_mut() {
             Some(kernel) => Some(kernel.snapshot()?),
             None => None,
@@ -248,6 +271,8 @@ impl Backend {
             directory: self.directory.display().to_string(),
             system_proxy: crate::system_proxy::status()?,
             delays: self.delays.clone(),
+            delay_errors: self.delay_errors.clone(),
+            log_text,
         })
     }
 
@@ -569,9 +594,69 @@ impl Backend {
             }
             Action::Delay(node) => {
                 let kernel = self.kernel.as_ref().ok_or("请先启动内核")?;
-                let delay = kernel.delay(&node)?;
+                self.delays.remove(&node);
+                self.delay_errors.remove(&node);
+                let delay = match kernel.delay(&node) {
+                    Ok(delay) => delay,
+                    Err(error) => {
+                        self.delay_errors.insert(node, error.to_string());
+                        return Err(error);
+                    }
+                };
                 self.delays.insert(node.clone(), delay);
                 Ok(format!("{node}：{delay} ms"))
+            }
+            Action::DelayGroup(group) => {
+                let kernel = self.kernel.as_mut().ok_or("请先启动内核")?;
+                let state = kernel.snapshot()?;
+                let nodes = &state.groups.get(&group).ok_or("策略组不存在")?.all;
+                self.progress
+                    .total
+                    .store(nodes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.progress
+                    .downloaded
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                self.progress
+                    .stage
+                    .store(3, std::sync::atomic::Ordering::Relaxed);
+                let mut failures = 0;
+                for chunk in nodes.chunks(4) {
+                    let results = std::thread::scope(|scope| {
+                        let kernel = &*kernel;
+                        let handles: Vec<_> = chunk
+                            .iter()
+                            .map(|node| scope.spawn(move || (node.clone(), kernel.delay(node))))
+                            .collect();
+                        handles
+                            .into_iter()
+                            .map(|handle| handle.join().map_err(|_| "测速线程异常退出"))
+                            .collect::<std::result::Result<Vec<_>, _>>()
+                    })?;
+                    for (node, result) in results {
+                        self.delays.remove(&node);
+                        self.delay_errors.remove(&node);
+                        match result {
+                            Ok(delay) => {
+                                self.delays.insert(node, delay);
+                            }
+                            Err(error) => {
+                                failures += 1;
+                                self.delay_errors.insert(node, error.to_string());
+                            }
+                        }
+                        self.progress
+                            .downloaded
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                if failures > 0 {
+                    return Err(format!(
+                        "{group} 测速完成：{} 成功，{failures} 失败；失败原因可在节点列表查看",
+                        nodes.len() - failures
+                    )
+                    .into());
+                }
+                Ok(format!("{group}：{} 个节点测速完成", nodes.len()))
             }
             Action::OpenData | Action::OpenLog => {
                 use std::os::windows::ffi::OsStrExt;

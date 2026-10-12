@@ -27,6 +27,7 @@ enum Page {
     Profiles,
     Nodes,
     Settings,
+    Logs,
 }
 
 enum Message {
@@ -34,6 +35,9 @@ enum Message {
     Path(String),
     Merge(String),
     Search(String),
+    LogSearch(String),
+    LogLevel(String),
+    SortDelays(bool),
     ProfileName(uuid::Uuid, String),
     RemoveRequested(uuid::Uuid),
     CancelRemove,
@@ -59,6 +63,9 @@ struct ClientApp {
     path: String,
     merge: String,
     search: String,
+    log_search: String,
+    log_level: String,
+    sort_delays: bool,
     profile_names: std::collections::BTreeMap<uuid::Uuid, String>,
     pending_remove: Option<uuid::Uuid>,
     status: String,
@@ -102,6 +109,7 @@ impl ClientApp {
         self.operation = match &action {
             Action::Refresh => None,
             Action::Upgrade => Some("正在升级内核"),
+            Action::DelayGroup(_) => Some("正在批量测速"),
             Action::CheckUpdate => Some("正在检查内核更新"),
             Action::Import(_) | Action::UpdateProfile(_) => Some("正在读取和验证配置"),
             _ => Some("正在应用操作"),
@@ -160,6 +168,9 @@ impl Component for ClientApp {
             path: String::new(),
             merge: String::new(),
             search: String::new(),
+            log_search: String::new(),
+            log_level: "all".into(),
+            sort_delays: false,
             profile_names: std::collections::BTreeMap::new(),
             pending_remove: None,
             status: "正在加载…".into(),
@@ -227,6 +238,9 @@ impl Component for ClientApp {
             Message::Path(path) => self.path = path,
             Message::Merge(merge) => self.merge = merge,
             Message::Search(search) => self.search = search,
+            Message::LogSearch(search) => self.log_search = search,
+            Message::LogLevel(level) => self.log_level = level,
+            Message::SortDelays(enabled) => self.sort_delays = enabled,
             Message::PaneOpen(open) => self.pane_open = open,
             Message::NavigationDisplay(mode) => {
                 self.compact_navigation = mode != NavigationViewDisplayMode::Expanded;
@@ -245,6 +259,7 @@ impl Component for ClientApp {
                     Some("profiles") => self.page = Page::Profiles,
                     Some("nodes") => self.page = Page::Nodes,
                     Some("settings") => self.page = Page::Settings,
+                    Some("logs") => self.page = Page::Logs,
                     _ => {}
                 }
             }
@@ -336,6 +351,19 @@ impl Component for ClientApp {
                         tray.hide();
                     }
                 }
+                if first_snapshot
+                    && self.snapshot.is_some()
+                    && self.tray.is_some()
+                    && let Some(path) = std::env::var_os("MIHOMO_X_UPDATE_READY")
+                    && let Err(error) = config::write_atomic(
+                        std::path::Path::new(&path),
+                        env!("CARGO_PKG_VERSION").as_bytes(),
+                    )
+                {
+                    self.status = format!("更新启动确认失败：{error}");
+                    self.status_error = true;
+                    self.status_visible = true;
+                }
                 if succeeded
                     && self
                         .backend
@@ -364,6 +392,7 @@ impl Component for ClientApp {
                     && self.snapshot.as_ref().is_some_and(|snapshot| {
                         snapshot.live.is_some()
                             || snapshot.settings.subscription_interval_seconds > 0
+                            || self.page == Page::Logs
                     })
                 {
                     self.execute(Action::Refresh, context);
@@ -391,6 +420,7 @@ impl Component for ClientApp {
             Page::Profiles => ("配置", "导入订阅或本地配置，管理你的连接来源"),
             Page::Nodes => ("节点", "选择策略组节点，查看连接延迟"),
             Page::Settings => ("设置", "桌面行为、内核更新与诊断"),
+            Page::Logs => ("日志", "查看内核日志，按级别和关键词筛选"),
         };
         let mut rows: Vec<View> = vec![
             StackPanel::new().spacing(4.0).children((
@@ -437,6 +467,14 @@ impl Component for ClientApp {
             }
             if stage == 2 {
                 rows.push(TextBlock::new().text("正在校验、替换并恢复连接…").into());
+            }
+            if stage == 3 {
+                rows.push(
+                    TextBlock::new()
+                        .automation_id("BatchDelayProgressText")
+                        .text(format!("已测速 {downloaded} / {total}"))
+                        .into(),
+                );
             }
         }
         let Some(snapshot) = &self.snapshot else {
@@ -807,6 +845,14 @@ impl Component for ClientApp {
             }
         }
         if self.page == Page::Nodes {
+            rows.push(setting_row(
+                "按延迟排序",
+                "成功测速的节点优先，未测速或失败节点置后",
+                ToggleSwitch::new()
+                    .automation_id("SortDelayButton")
+                    .is_on(self.sort_delays)
+                    .on_toggled(context.callback(Message::SortDelays)),
+            ));
             rows.push(
                 TextBox::new()
                     .automation_id("NodeSearchBox")
@@ -838,9 +884,28 @@ impl Component for ClientApp {
                     );
                     let selectable =
                         ["Selector", "URLTest", "Fallback"].contains(&group.kind.as_str());
-                    let nodes: Vec<View> = group
-                        .all
-                        .iter()
+                    let delay_group = name.clone();
+                    rows.push(
+                        Button::new()
+                            .automation_id(format!("DelayGroup_{name}"))
+                            .is_enabled(available)
+                            .on_click(context.callback(move |()| {
+                                Message::Execute(Action::DelayGroup(delay_group.clone()))
+                            }))
+                            .content("整组测速"),
+                    );
+                    let mut sorted_nodes: Vec<_> = group.all.iter().collect();
+                    if self.sort_delays {
+                        sorted_nodes.sort_by_key(|node| {
+                            (
+                                !snapshot.delays.contains_key(*node),
+                                snapshot.delays.get(*node).copied(),
+                                *node,
+                            )
+                        });
+                    }
+                    let nodes: Vec<View> = sorted_nodes
+                        .into_iter()
                         .filter(|node| node.to_lowercase().contains(&query))
                         .map(|node| {
                             let name = name.clone();
@@ -851,6 +916,9 @@ impl Component for ClientApp {
                             }
                             if let Some(delay) = snapshot.delays.get(&node) {
                                 label = format!("{label} · {delay} ms");
+                            }
+                            if let Some(error) = snapshot.delay_errors.get(&node) {
+                                label = format!("{label} · 测速失败：{error}");
                             }
                             let delay_node = node.clone();
                             let delay_id = format!("Delay_{name}_{delay_node}");
@@ -908,6 +976,72 @@ impl Component for ClientApp {
                         .into(),
                 );
             }
+        }
+        if self.page == Page::Logs {
+            rows.push(
+                TextBox::new()
+                    .automation_id("LogSearchBox")
+                    .text(&self.log_search)
+                    .placeholder_text("搜索日志关键词")
+                    .on_text_changed(context.callback(Message::LogSearch))
+                    .into(),
+            );
+            rows.push(
+                StackPanel::new().spacing(8.0).keyed_children(
+                    [
+                        ("all", "全部"),
+                        ("info", "信息"),
+                        ("warning", "警告"),
+                        ("error", "错误"),
+                        ("debug", "调试"),
+                    ]
+                    .into_iter()
+                    .map(|(level, label)| {
+                        (
+                            level.to_owned(),
+                            Button::new()
+                                .automation_id(format!("LogLevel_{level}"))
+                                .is_enabled(self.log_level != level)
+                                .on_click(
+                                    context.callback(move |()| Message::LogLevel(level.into())),
+                                )
+                                .content(label),
+                        )
+                    }),
+                ),
+            );
+            rows.push(
+                Button::new()
+                    .automation_id("RefreshLogButton")
+                    .is_enabled(available)
+                    .on_click(context.callback(|()| Message::Execute(Action::Refresh)))
+                    .content("刷新日志"),
+            );
+            let query = self.log_search.to_lowercase();
+            let lines: Vec<_> = snapshot
+                .log_text
+                .lines()
+                .filter(|line| {
+                    (self.log_level == "all" || line.contains(&format!("level={}", self.log_level)))
+                        && line.to_lowercase().contains(&query)
+                })
+                .collect();
+            let mut text = lines.join("\n");
+            if text.is_empty() {
+                text = "暂无匹配日志".into();
+            }
+            rows.push(
+                TextBlock::new()
+                    .text("显示日志末尾最多 64 KiB，自动刷新。")
+                    .into(),
+            );
+            rows.push(
+                TextBlock::new()
+                    .automation_id("LogContentBox")
+                    .text(text)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            );
         }
         if self.page == Page::Settings {
             rows.push(section("订阅定时更新", "仅在应用运行时刷新 URL 订阅；失败保留原配置，按所选间隔重试。当前配置内容变化后会重新连接。"));
@@ -1206,6 +1340,7 @@ impl Component for ClientApp {
                 Symbol::Document,
             ),
             (Page::Nodes, "nodes", "NodesTab", "节点", Symbol::World),
+            (Page::Logs, "logs", "LogsTab", "日志", Symbol::Document),
             (
                 Page::Settings,
                 "settings",

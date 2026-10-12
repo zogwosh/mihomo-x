@@ -505,14 +505,22 @@ impl Kernel {
         url.query_pairs_mut()
             .append_pair("timeout", "5000")
             .append_pair("url", "https://www.gstatic.com/generate_204");
-        let response: Value = self
+        let response = self
             .client
             .get(url)
             .timeout(Duration::from_secs(7))
             .bearer_auth(&self.secret)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .send()
+            .map_err(reqwest::Error::without_url)?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "节点测速失败（{}）：{}",
+                response.status(),
+                response.text()?
+            )
+            .into());
+        }
+        let response: Value = response.json()?;
         response
             .get("delay")
             .and_then(Value::as_u64)

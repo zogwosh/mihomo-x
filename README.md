@@ -7,7 +7,7 @@ GitHub 仓库：[zogwosh/mihomo-x](https://github.com/zogwosh/mihomo-x)（公开
 
 设置页的“开机启动”独立于“启动后自动连接”。开启后注册当前用户登录触发、最高权限运行的计划任务；关闭时删除任务。启动隐藏由现有开关控制。移动应用目录后，请关闭再开启自启以更新路径。
 
-应用启动后检查应用自身更新，设置页也可手动检查。发现更高稳定版本后点击“更新并重启”：从公开 GitHub Releases 下载安装包、验证资产 SHA256、退出应用、静默安装到当前目录并重新启动。不需要 GitHub CLI 或登录。应用数据与独立内核保留；更新日志位于数据目录的 app-update.log 和 app-update.log.installer.log。不提供启动健康失败后的版本回滚。
+应用启动后检查应用自身更新，设置页也可手动检查。发现更高稳定版本后点击“更新并重启”：从公开 GitHub Releases 下载安装包、验证资产 SHA256、退出应用、静默安装到当前目录并重新启动。不需要 GitHub CLI 或登录。应用数据与独立内核保留；更新日志位于数据目录的 app-update.log 和 app-update.log.installer.log。从 v0.1.3 开始，更新前备份安装目录和卸载登记，新版须在 60 秒内确认初始化及版本；安装或启动确认失败时恢复旧安装文件和登记并重启旧版。备份保留在本次 update-* 目录。
 
 应用名称、可执行文件、图标和数据目录已改为 `mihomo-x`；新数据目录为 `%LOCALAPPDATA%/mihomo-x`，不自动迁移旧 `%LOCALAPPDATA%/te` 数据。
 

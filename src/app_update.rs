@@ -75,6 +75,9 @@ pub fn stage(release: &Release, directory: &Path) -> Result<()> {
     config::write_atomic(&installer, &bytes)?;
     let executable = std::env::current_exe()?;
     let destination = executable.parent().ok_or("应用目录无效")?;
+    if !destination.join("unins000.exe").is_file() {
+        return Err("请先通过安装包安装应用，再使用自动更新".into());
+    }
     let script = staging.join("install.ps1");
     config::write_atomic(&script, include_bytes!("../scripts/install-update.ps1"))?;
     Command::new("powershell.exe")
@@ -94,6 +97,8 @@ pub fn stage(release: &Release, directory: &Path) -> Result<()> {
         .arg(destination)
         .arg("-Log")
         .arg(directory.join("app-update.log"))
+        .arg("-ExpectedVersion")
+        .arg(version)
         .creation_flags(0x08000000)
         .spawn()?;
     Ok(())
