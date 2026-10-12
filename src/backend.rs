@@ -15,6 +15,7 @@ pub struct Backend {
     pub latest: Option<Release>,
     pub app_latest: Option<Release>,
     pub restart_for_update: bool,
+    subscription_attempts: std::collections::BTreeMap<Uuid, std::time::Instant>,
     job: usize,
     delays: std::collections::BTreeMap<String, u64>,
     progress: std::sync::Arc<kernel::DownloadProgress>,
@@ -38,6 +39,7 @@ pub struct Snapshot {
 pub enum Action {
     Initialize,
     Refresh,
+    SubscriptionInterval(u64),
     Import(String),
     UpdateProfile(Uuid),
     Rename(Uuid, String),
@@ -127,6 +129,7 @@ impl Backend {
             latest: None,
             app_latest: None,
             restart_for_update: false,
+            subscription_attempts: std::collections::BTreeMap::new(),
             job,
             delays: std::collections::BTreeMap::new(),
             progress,
@@ -260,6 +263,19 @@ impl Backend {
                 }
                 Ok("请先导入并选择 profile".into())
             }
+            Action::SubscriptionInterval(seconds) => {
+                if ![0, 3600, 21600, 86400].contains(&seconds) {
+                    return Err("订阅更新间隔无效".into());
+                }
+                let previous = self.settings.subscription_interval_seconds;
+                self.settings.subscription_interval_seconds = seconds;
+                if let Err(error) = self.save() {
+                    self.settings.subscription_interval_seconds = previous;
+                    return Err(error);
+                }
+                self.subscription_attempts.clear();
+                Ok("订阅定时更新设置已保存".into())
+            }
             Action::Refresh => {
                 if let Some(kernel) = self.kernel.as_mut()
                     && let Some(status) = kernel.exit_status()?
@@ -267,6 +283,47 @@ impl Backend {
                     self.kernel = None;
                     crate::system_proxy::restore(&self.directory)?;
                     return Err(format!("Mihomo 异常退出: {status}，请查看 mihomo.log").into());
+                }
+                let interval = self.settings.subscription_interval_seconds;
+                if interval == 0 {
+                    return Ok(String::new());
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs();
+                let due: Vec<_> = self
+                    .settings
+                    .profiles
+                    .iter()
+                    .filter(|profile| {
+                        let remote = profile.source.starts_with("https://")
+                            || profile.source.starts_with("http://");
+                        let outdated = profile
+                            .updated_at
+                            .is_none_or(|updated| now.saturating_sub(updated) >= interval);
+                        let retry_ready = self
+                            .subscription_attempts
+                            .get(&profile.id)
+                            .is_none_or(|attempt| attempt.elapsed().as_secs() >= interval);
+                        remote && outdated && retry_ready
+                    })
+                    .map(|profile| (profile.id, profile.name.clone()))
+                    .collect();
+                let mut updated = 0;
+                let mut errors = Vec::new();
+                for (id, name) in due {
+                    self.subscription_attempts
+                        .insert(id, std::time::Instant::now());
+                    match self.apply(Action::UpdateProfile(id)) {
+                        Ok(_) => updated += 1,
+                        Err(error) => errors.push(format!("{name}：{error}")),
+                    }
+                }
+                if !errors.is_empty() {
+                    return Err(format!("已更新 {updated} 个订阅；{}", errors.join("；")).into());
+                }
+                if updated > 0 {
+                    return Ok(format!("已定时更新 {updated} 个订阅"));
                 }
                 Ok(String::new())
             }
@@ -320,7 +377,9 @@ impl Backend {
                 let path = self.directory.join("profiles").join(format!("{id}.yaml"));
                 let previous_bytes = fs::read(&path)?;
                 let previous_settings = self.settings.clone();
-                let was_running = self.kernel.is_some() && self.settings.selected == Some(id);
+                let was_running = self.kernel.is_some()
+                    && self.settings.selected == Some(id)
+                    && bytes != previous_bytes;
                 config::write_atomic(&path, &bytes)?;
                 self.settings.profiles[index].updated_at = Some(
                     std::time::SystemTime::now()

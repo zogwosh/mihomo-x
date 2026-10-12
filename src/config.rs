@@ -31,6 +31,8 @@ pub struct Settings {
     pub start_hidden: bool,
     #[serde(default)]
     pub launch_at_login: bool,
+    #[serde(default)]
+    pub subscription_interval_seconds: u64,
     pub selections: BTreeMap<Uuid, BTreeMap<String, String>>,
 }
 
@@ -47,6 +49,7 @@ impl Default for Settings {
             close_to_tray: true,
             start_hidden: false,
             launch_at_login: false,
+            subscription_interval_seconds: 0,
             selections: BTreeMap::new(),
         }
     }
@@ -74,6 +77,9 @@ pub fn read_settings(path: &Path) -> Result<Settings> {
     let result = (|| -> Result<Settings> {
         let settings: Settings = serde_json::from_slice(&bytes)?;
         mapping(&settings.merge_yaml)?;
+        if ![0, 3600, 21600, 86400].contains(&settings.subscription_interval_seconds) {
+            return Err("订阅更新间隔无效".into());
+        }
         if let Some(id) = settings.selected
             && !settings.profiles.iter().any(|profile| profile.id == id)
         {

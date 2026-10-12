@@ -110,6 +110,7 @@ pub struct Kernel {
     pub controller: String,
     secret: String,
     client: Client,
+    traffic_sample: Option<(Instant, u64, u64)>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -138,6 +139,20 @@ pub struct LiveState {
     pub mode: String,
     pub tun: bool,
     pub groups: BTreeMap<String, Proxy>,
+    pub upload_total: u64,
+    pub download_total: u64,
+    pub upload_rate: Option<f64>,
+    pub download_rate: Option<f64>,
+    pub connection_count: usize,
+}
+
+#[derive(Deserialize)]
+struct Connections {
+    #[serde(rename = "uploadTotal")]
+    upload_total: u64,
+    #[serde(rename = "downloadTotal")]
+    download_total: u64,
+    connections: Option<Vec<serde::de::IgnoredAny>>,
 }
 
 impl Kernel {
@@ -284,6 +299,7 @@ impl Kernel {
             .stderr(errors)
             .spawn()?;
         let mut kernel = Self {
+            traffic_sample: None,
             child,
             controller,
             secret,
@@ -385,6 +401,23 @@ impl Kernel {
         let proxies: Proxies = self
             .request(reqwest::Method::GET, "/proxies", None)?
             .json()?;
+        let connections: Connections = self
+            .request(reqwest::Method::GET, "/connections", None)?
+            .json()?;
+        let now = Instant::now();
+        let mut upload_rate = None;
+        let mut download_rate = None;
+        if let Some((previous, upload, download)) = self.traffic_sample {
+            let seconds = now.duration_since(previous).as_secs_f64();
+            if seconds > 0.0
+                && connections.upload_total >= upload
+                && connections.download_total >= download
+            {
+                upload_rate = Some((connections.upload_total - upload) as f64 / seconds);
+                download_rate = Some((connections.download_total - download) as f64 / seconds);
+            }
+        }
+        self.traffic_sample = Some((now, connections.upload_total, connections.download_total));
         let groups = proxies
             .proxies
             .into_iter()
@@ -395,6 +428,13 @@ impl Kernel {
             mode,
             tun,
             groups,
+            upload_total: connections.upload_total,
+            download_total: connections.download_total,
+            upload_rate,
+            download_rate,
+            connection_count: connections
+                .connections
+                .map_or(0, |connections| connections.len()),
         })
     }
 

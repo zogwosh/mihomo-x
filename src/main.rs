@@ -361,10 +361,10 @@ impl Component for ClientApp {
                     self.status = format!("窗口位置保存失败：{error}");
                 }
                 if !self.busy
-                    && self
-                        .snapshot
-                        .as_ref()
-                        .is_some_and(|snapshot| snapshot.live.is_some())
+                    && self.snapshot.as_ref().is_some_and(|snapshot| {
+                        snapshot.live.is_some()
+                            || snapshot.settings.subscription_interval_seconds > 0
+                    })
                 {
                     self.execute(Action::Refresh, context);
                 }
@@ -525,6 +525,31 @@ impl Component for ClientApp {
             );
             let connection = rows.split_off(connection_start);
             rows.push(card(connection));
+            if let Some(live) = &snapshot.live {
+                let mut rates = "正在采样流量…".to_owned();
+                if let (Some(upload), Some(download)) = (live.upload_rate, live.download_rate) {
+                    rates = format!(
+                        "上传 {:.1} KiB/s · 下载 {:.1} KiB/s",
+                        upload / 1024.0,
+                        download / 1024.0
+                    );
+                }
+                rows.push(card(vec![
+                    TextBlock::new()
+                        .automation_id("TrafficRateText")
+                        .text(rates)
+                        .into(),
+                    TextBlock::new()
+                        .automation_id("TrafficTotalText")
+                        .text(format!(
+                            "本次内核运行：上传 {:.2} MiB · 下载 {:.2} MiB · 活动连接 {}",
+                            live.upload_total as f64 / 1048576.0,
+                            live.download_total as f64 / 1048576.0,
+                            live.connection_count
+                        ))
+                        .into(),
+                ]));
+            }
             rows.push(section(
                 "路由模式",
                 "规则按配置分流；全局使用 GLOBAL 策略组；直连跳过代理。",
@@ -885,6 +910,32 @@ impl Component for ClientApp {
             }
         }
         if self.page == Page::Settings {
+            rows.push(section("订阅定时更新", "仅在应用运行时刷新 URL 订阅；失败保留原配置，按所选间隔重试。当前配置内容变化后会重新连接。"));
+            let interval = snapshot.settings.subscription_interval_seconds;
+            rows.push(
+                StackPanel::new().spacing(8.0).keyed_children(
+                    [
+                        (0, "关闭"),
+                        (3600, "每小时"),
+                        (21600, "每 6 小时"),
+                        (86400, "每天"),
+                    ]
+                    .into_iter()
+                    .map(|(seconds, label)| {
+                        (
+                            seconds.to_string(),
+                            Button::new()
+                                .automation_id(format!("SubscriptionInterval_{seconds}"))
+                                .is_enabled(available && interval != seconds)
+                                .on_click(context.callback(move |()| {
+                                    Message::Execute(Action::SubscriptionInterval(seconds))
+                                }))
+                                .content(label),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                ),
+            );
             rows.push(section("桌面行为", "按你的使用习惯设置连接与窗口行为。"));
             rows.push(setting_row(
                 "开机启动",
